@@ -5,14 +5,15 @@ import re
 from thefuzz import fuzz
 from itertools import combinations
 
+
 class ACHA_MATRICULA_CONSIGFACIL:
     def __init__(self):
 
-        self.credbase_bruto = r"Z:\Python\ACHA_MATRICULA_CONSIGFACIL\CREDBASE TRABALHADO GOV MA da CAMILLE 10.2025.xlsx"
+        self.credbase_bruto = r"C:\Users\Guilherme\PycharmProjects\AchaMatriculas\matriculas gov pi\CREDBASE TRABALHADO GOV PI 08.2025.xlsx"
 
-        self.averbacao_bruto = r"Z:\Python\ACHA_MATRICULA_CONSIGFACIL\TRABALHADO AVERBADOS GERAL GOV MA CAMILLE 10.2025.xlsx"
+        self.averbacao_bruto = r"C:\Users\Guilherme\PycharmProjects\AchaMatriculas\matriculas gov pi\AVERBADOS GOV PI 08.2025.xlsx"
 
-        self.caminho = r'Z:\Python\ACHA_MATRICULA_CONSIGFACIL'
+        self.caminho = r'C:\Users\Guilherme\PycharmProjects\AchaMatriculas\matriculas gov pi'
 
         df_credbase = pd.read_excel(self.credbase_bruto)
 
@@ -79,6 +80,8 @@ class ACHA_MATRICULA_CONSIGFACIL:
             print("\n--- Iniciando Método 1: Lógica de Soma por CPF ---")
             credbase_tratado = credbase_para_somar.copy()
             averbacao_geral = averbacao_para_somar.copy()
+
+            averbacao_geral['Matrícula'] = averbacao_geral['Matrícula'].astype(str)
 
             # Preparação dos dados para a soma
             credbase_tratado['CPF'] = credbase_tratado['CPF'].astype(str).str.strip()
@@ -160,7 +163,8 @@ class ACHA_MATRICULA_CONSIGFACIL:
 
         def achar_por_saldo_restante(credbase_restante, averbacao_original, credbase_com_resultados_parciais):
             """
-            Atribui matrículas com base no maior saldo restante disponível para um CPF.
+            Atribui matrículas com base no maior saldo restante disponível para um CPF,
+            consumindo o saldo dinamicamente.
 
             Args:
                 credbase_restante (pd.DataFrame): As linhas da credbase que ainda não têm matrícula.
@@ -173,8 +177,6 @@ class ACHA_MATRICULA_CONSIGFACIL:
             print("\n--- Iniciando Método 4: Análise de Saldo Restante ---")
             df_restante = credbase_restante.copy()
 
-            credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'] = credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'].astype(int)
-
             # --- Passo 1: Calcular o "gasto" de cada matrícula com base nos resultados já encontrados ---
             # Usamos o DataFrame completo com os resultados parciais para ter a visão total.
             gasto_por_matricula = (credbase_com_resultados_parciais
@@ -182,14 +184,14 @@ class ACHA_MATRICULA_CONSIGFACIL:
                                    .groupby('MATRICULA_ENCONTRADA_1')['Parcela']
                                    .sum())
 
-            # print(f'tipo da coluna matrícula {credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'].dtype}')
+            print(f'tipo da coluna matrícula {credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'].dtype}')
 
-            # print(f'\nGASTO POR MATRICULA: \n{gasto_por_matricula['278846001']}\n')
+            print(f'\nGASTO POR MATRICULA: \n{gasto_por_matricula['96253']}\n')
 
             # --- Passo 2: Calcular o saldo restante em cada matrícula da averbação ---
             df_averbacao_saldos = averbacao_original.copy()
             print(f'tipo da coluna matrícula {df_averbacao_saldos['Matrícula'].dtype}')
-            # df_averbacao_saldos['Matrícula'] = df_averbacao_saldos['Matrícula'].astype(int)
+            df_averbacao_saldos['Matrícula'] = df_averbacao_saldos['Matrícula'].astype(str)
             # Limpa a coluna de valor para garantir que é numérica
             '''df_averbacao_saldos['Valor da reserva'] = (df_averbacao_saldos['Valor da reserva'].astype(str)
                                                        .str.replace(".", "", regex=False)
@@ -202,29 +204,53 @@ class ACHA_MATRICULA_CONSIGFACIL:
             df_averbacao_saldos['saldo_restante'] = df_averbacao_saldos['Valor da reserva'] - df_averbacao_saldos[
                 'gasto_calculado']
 
-            print(f'\nGASTO POR MATRICULA: \n{df_averbacao_saldos.loc[df_averbacao_saldos['Matrícula'] == 278846001]}\n')
+            print(f'\nGASTO POR MATRICULA: \n{df_averbacao_saldos.loc[df_averbacao_saldos['Matrícula'] == '96253']}\n')
 
             # --- Passo 3: Criar um mapa de busca otimizado: CPF -> [(Matrícula, Saldo), ...] ---
+            # ATENÇÃO: Convertemos para lista de listas para que seja mutável (listas são, tuplas não são)
             mapa_saldos_por_cpf = (df_averbacao_saldos
                                    .groupby('CPF')[['Matrícula', 'saldo_restante']]
-                                   .apply(lambda x: list(x.to_records(index=False)))
+                                   .apply(
+                lambda x: [list(item) for item in x.to_records(index=False)])  # Converte para lista de listas
                                    .to_dict())
 
-            # --- Passo 4: Iterar sobre as linhas restantes e encontrar a melhor matrícula ---
-            for index, row in df_restante.iterrows():
+            # --- Passo 4: Iterar sobre as linhas restantes e encontrar a melhor matrícula (LÓGICA ALTERADA) ---
+            # É importante ordenar por Parcela (da maior para a menor) para alocar as parcelas grandes primeiro
+            # Isso ajuda a otimizar o uso do saldo
+            df_restante_ordenado = df_restante.sort_values(by=['CPF', 'Parcela'], ascending=[True, False])
+
+            for index, row in df_restante_ordenado.iterrows():
                 cpf = str(row['CPF']).strip()
+                parcela_a_cobrir = row['Parcela']
 
                 # Pega a lista de matrículas e saldos disponíveis para este CPF
                 saldos_disponiveis = mapa_saldos_por_cpf.get(cpf)
 
                 if saldos_disponiveis:
-                    # Encontra a tupla (matrícula, saldo) com o maior saldo
-                    melhor_opcao = max(saldos_disponiveis, key=lambda item: item[1])
+
+                    # 1. Tenta encontrar matrículas que TÊM saldo suficiente
+                    #    item[0] = Matrícula, item[1] = saldo_restante
+                    opcoes_com_saldo = [item for item in saldos_disponiveis if item[1] >= parcela_a_cobrir]
+
+                    if opcoes_com_saldo:
+                        # Se encontrou, pega a que tem o maior saldo *entre elas*
+                        melhor_opcao = max(opcoes_com_saldo, key=lambda item: item[1])
+                    else:
+                        # 2. Fallback: Se NENHUMA tem saldo, pega a que tem o maior saldo (mesmo que estoure)
+                        melhor_opcao = max(saldos_disponiveis, key=lambda item: item[1])
+
                     melhor_matricula = melhor_opcao[0]
+                    saldo_atual_da_matricula = melhor_opcao[1]
 
                     # Atribui a matrícula encontrada e adiciona uma coluna de auditoria
                     df_restante.loc[index, 'MATRICULA_ENCONTRADA_1'] = melhor_matricula
                     df_restante.loc[index, 'Metodo_Encontrado'] = 'SALDO_RESTANTE'
+                    df_restante.loc[index, 'Saldo_da_Matricula_no_Momento'] = saldo_atual_da_matricula
+
+                    # 3. ATUALIZA O SALDO EM MEMÓRIA (Recálculo)
+                    #    Subtrai a parcela do saldo da matrícula escolhida
+                    #    para que a próxima iteração deste CPF veja o valor atualizado.
+                    melhor_opcao[1] -= parcela_a_cobrir  # Modifica o saldo na lista
 
             print("--- Método 4 concluído! ---")
             return df_restante
