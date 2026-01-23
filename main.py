@@ -2,33 +2,81 @@ import pandas as pd
 import openpyxl
 import numpy as np
 import re
+import tkinter as tk
+from tkinter import filedialog
 from thefuzz import fuzz
 from itertools import combinations
+
 
 class ACHA_MATRICULA_CONSIGFACIL:
     def __init__(self):
 
-        self.credbase_bruto = r"Z:\Python\ACHA_MATRICULA_CONSIGFACIL\CREDBASE TRABALHADO GOV MA da CAMILLE 10.2025.xlsx"
+        print(' # ------------------------------ BUSCADOR DE MATRÍCULAS CONSIGFÁCIL ------------------------------ #')
+        print(' #                                           INSTRUÇÕES                                             #')
+        print(' 1 - O Credbase precisa estar apenas com os casos que você tem certeza que são aptos a serem lançados!\n'
+              ' 2 - O arquivo de averbações precisa ter apenas o produto que você sabe que precisa ser lançado!')
+        print(' # ------------------------------------------------------------------------------------------------ #\n\n')
 
-        self.averbacao_bruto = r"Z:\Python\ACHA_MATRICULA_CONSIGFACIL\TRABALHADO AVERBADOS GERAL GOV MA CAMILLE 10.2025.xlsx"
+        def selecionar_arquivo(titulo="Selecione um arquivo", multiplos=False):
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
 
-        self.caminho = r'Z:\Python\ACHA_MATRICULA_CONSIGFACIL'
+            if multiplos:
+                arquivos = filedialog.askopenfilenames(
+                    title=titulo,
+                    filetypes=[("Arquivos Excel", "*.xlsx *.xls *.csv"), ("Todos os arquivos", "*.*")]
+                )
+                root.destroy()
+                return list(arquivos)
+            else:
+                arquivo = filedialog.askopenfilename(
+                    title=titulo,
+                    filetypes=[("Arquivos Excel", "*.xlsx *.xls *.csv"), ("Todos os arquivos", "*.*")]
+                )
+                root.destroy()
+                return arquivo
 
-        df_credbase = pd.read_excel(self.credbase_bruto)
+        def selecionar_pasta(titulo="Selecione uma pasta"):
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            pasta = filedialog.askdirectory(title=titulo)
+            root.destroy()
+            if not pasta:
+                return None
+            return pasta
+
+        def selecionar_com_validacao(titulo, extensao_correta):
+            while True:
+                arquivo = selecionar_arquivo(titulo)
+                if not arquivo:  # usuário cancelou ou fechou
+                    return None
+                if arquivo.lower().endswith(extensao_correta):
+                    return arquivo
+                else:
+                    print(f"Arquivo inválido! Selecione um arquivo com extensão {extensao_correta}")
+
+        # --- CONFIGURAÇÃO ---
+
+        # Front trabalhado
+        self.front_trabalhado = selecionar_com_validacao(r"Selecione o Front Trabalhado", 'xlsx')
+
+        # averbação bruto
+        self.averbacao_bruto = selecionar_com_validacao(r"Selecione o arquivo de Averbação", "xlsx")
+
+        self.caminho = selecionar_pasta('Insira o caminho de saída')
+
+        df_front = pd.read_excel(self.front_trabalhado)
 
         df_averbacao = pd.read_excel(self.averbacao_bruto)
 
-        self.acha_matricula(df_credbase, df_averbacao)
+        self.acha_matricula(df_front, df_averbacao)
+
 
     # Aqui vai a função de procurar as matrículas corretas por similaridmat
-    def acha_matricula(self, credbase: pd.DataFrame, averbacao: pd.DataFrame):
+    def acha_matricula(self, front: pd.DataFrame, averbacao: pd.DataFrame):
         # --- PREPARAÇÃO INICIAL ---
-        credbase = credbase.rename(columns={'Codigo Credbase': 'Codigo_Credbase'})
-        colunas_necessarias = ['Codigo_Credbase', 'Banco(s) quitado(s)', 'Esteira',
-                               'Esteira(dias)', 'Tipo', 'Operacao', 'Situacao', 'Inicio', 'Cliente',
-                               'Data Averbacao', 'CPF', 'Convenio', 'Banco', 'Parcela', 'Prazo',
-                               'Tabela', 'Matricula']
-        crebase_reduzido = credbase[colunas_necessarias].copy()
 
         print("Iniciando o processo de extração das matrículas...")
 
@@ -40,8 +88,8 @@ class ACHA_MATRICULA_CONSIGFACIL:
             return re.sub(r'[^0-9a-zA-Z]', '', texto)
 
         def encontrar_matriculas_na_linha(row, mapa_cpf_matriculas):
-            cpf = str(row['CPF']).strip()
-            texto_matriculas_sujo = str(row['Matricula'])
+            cpf = str(row['nrCpf']).strip()
+            texto_matriculas_sujo = str(row['dsMatricula'])
 
             if cpf not in mapa_cpf_matriculas:
                 return ['CPF não encontrado na Averbação']
@@ -75,15 +123,16 @@ class ACHA_MATRICULA_CONSIGFACIL:
 
             return encontrados_nesta_linha
 
-        def soma_por_cpf(credbase_para_somar, averbacao_para_somar):
-            print("\n--- Iniciando Método 1: Lógica de Soma por CPF ---")
-            credbase_tratado = credbase_para_somar.copy()
+        def soma_por_cpf(front_para_somar, averbacao_para_somar):
+            front_tratado = front_para_somar.copy()
             averbacao_geral = averbacao_para_somar.copy()
 
+            averbacao_geral['Matrícula'] = averbacao_geral['Matrícula'].astype(str)
+
             # Preparação dos dados para a soma
-            credbase_tratado['CPF'] = credbase_tratado['CPF'].astype(str).str.strip()
+            front_tratado['nrCpf'] = front_tratado['nrCpf'].astype(str).str.strip()
             averbacao_geral['CPF'] = averbacao_geral['CPF'].astype(str).str.strip()
-            credbase_tratado['Parcela'] = pd.to_numeric(credbase_tratado['Parcela'], errors='coerce')
+            front_tratado['vlPrestacao'] = pd.to_numeric(front_tratado['vlPrestacao'], errors='coerce')
 
             '''averbacao_geral['Valor da reserva'] = (averbacao_geral['Valor da reserva'].astype(str)
                                                    .str.replace(".", "", regex=False)
@@ -97,16 +146,16 @@ class ACHA_MATRICULA_CONSIGFACIL:
 
             # print(f'b_lookup {b_lookup}')
 
-            cpfs_unicos = credbase_tratado['CPF'].unique()
+            cpfs_unicos = front_tratado['nrCpf'].unique()
             tolerancias = [0, 20, 40, 60]
 
             for cpf in cpfs_unicos:
                 if cpf not in b_lookup:
-                    indices_para_marcar = credbase_tratado[credbase_tratado['CPF'] == cpf].index
-                    credbase_tratado.loc[indices_para_marcar, 'MATRICULA_ENCONTRADA_1'] = 'CPF não encontrado na averbação (Soma)'
+                    indices_para_marcar = front_tratado[front_tratado['nrCpf'] == cpf].index
+                    front_tratado.loc[indices_para_marcar, 'MATRICULA_ENCONTRADA_1'] = 'CPF não encontrado na averbação (Soma)'
                     continue
 
-                itens_a_combinar = list(credbase_tratado[credbase_tratado['CPF'] == cpf][['Parcela']].itertuples())
+                itens_a_combinar = list(front_tratado[front_tratado['nrCpf'] == cpf][['vlPrestacao']].itertuples())
                 while itens_a_combinar:
                     match_encontrado_nesta_iteracao = False
                     for tamanho_comb in range(1, len(itens_a_combinar) + 1):
@@ -119,11 +168,11 @@ class ACHA_MATRICULA_CONSIGFACIL:
                                     indices_para_atualizar = [item.Index for item in comb]
 
                                     # Atualiza a coluna 'Matricula' original
-                                    credbase_tratado.loc[indices_para_atualizar, 'MATRICULA_ENCONTRADA_1'] = mat_disponivel
+                                    front_tratado.loc[indices_para_atualizar, 'MATRICULA_ENCONTRADA_1'] = mat_disponivel
                                     # Adiciona colunas de auditoria
-                                    credbase_tratado.loc[indices_para_atualizar, 'Soma_Calculada'] = soma_parcelas
-                                    credbase_tratado.loc[indices_para_atualizar, 'Parcela_Encontrada'] = valor_alvo
-                                    credbase_tratado.loc[indices_para_atualizar, 'Metodo_Encontrado'] = 'SOMAS'
+                                    front_tratado.loc[indices_para_atualizar, 'Soma_Calculada'] = soma_parcelas
+                                    front_tratado.loc[indices_para_atualizar, 'Parcela_Encontrada'] = valor_alvo
+                                    front_tratado.loc[indices_para_atualizar, 'Metodo_Encontrado'] = 'SOMAS'
 
                                     itens_a_combinar = [item for item in itens_a_combinar if
                                                         item.Index not in indices_para_atualizar]
@@ -135,13 +184,13 @@ class ACHA_MATRICULA_CONSIGFACIL:
 
             print("--- Processo de soma concluído! ---")
             # print(f"\n\n{credbase_tratado.loc[credbase_tratado['MATRICULA_ENCONTRADA_1'].notna()]}\n\n")
-            return credbase_tratado  # <<-- IMPORTANTE: Retorna o DataFrame modificado
+            return front_tratado  # <<-- IMPORTANTE: Retorna o DataFrame modificado
 
-        def achar_por_contse(credbase_contse, averbacao_contse):
+        def achar_por_contse(front_contse, averbacao_contse):
             print("\n--- Iniciando Método 3: Lógica de CONT.SE 1 ---")
             # 1 Copiar os DataFrames
             df_averbacao = averbacao_contse.copy()
-            df_credbase = credbase_contse.copy()
+            df_front = front_contse.copy()
 
             # 2 Contar quantidade de registros por CPF
             df_averbacao['CONTSE LOCAL'] = df_averbacao.groupby('CPF')['CPF'].transform('count')
@@ -153,43 +202,43 @@ class ACHA_MATRICULA_CONSIGFACIL:
             mapa_matricula = df_averbacao_unico.set_index('CPF')['Matrícula'].to_dict()
 
             # 5 Preencher no credbase apenas para esses CPFs
-            df_credbase['MATRICULA_ENCONTRADA_1'] = df_credbase['CPF'].map(mapa_matricula)
-            df_credbase.loc[df_credbase['MATRICULA_ENCONTRADA_1'] != '', 'Metodo_Encontrado'] = 'CONT.SE'
+            df_front['MATRICULA_ENCONTRADA_1'] = df_front['nrCpf'].map(mapa_matricula)
+            mask_contse = (df_front['MATRICULA_ENCONTRADA_1'] != '') | df_front['MATRICULA_ENCONTRADA_1'] != 'CPF não encontrado na Averbação'
+            df_front.loc[mask_contse, 'Metodo_Encontrado'] = 'CONT.SE'
 
-            return df_credbase
+            return df_front
 
-        def achar_por_saldo_restante(credbase_restante, averbacao_original, credbase_com_resultados_parciais):
+        def achar_por_saldo_restante(front_restante, averbacao_original, front_com_resultados_parciais):
             """
-            Atribui matrículas com base no maior saldo restante disponível para um CPF.
+            Atribui matrículas com base no maior saldo restante disponível para um CPF,
+            consumindo o saldo dinamicamente.
 
             Args:
-                credbase_restante (pd.DataFrame): As linhas da credbase que ainda não têm matrícula.
+                front_restante (pd.DataFrame): As linhas da credbase que ainda não têm matrícula.
                 averbacao_original (pd.DataFrame): O DataFrame de averbação original.
-                credbase_com_resultados_parciais (pd.DataFrame): A credbase completa com os resultados dos passos anteriores.
+                front_com_resultados_parciais (pd.DataFrame): A credbase completa com os resultados dos passos anteriores.
 
             Returns:
                 pd.DataFrame: O DataFrame credbase_restante com as matrículas encontradas por este método.
             """
             print("\n--- Iniciando Método 4: Análise de Saldo Restante ---")
-            df_restante = credbase_restante.copy()
-
-            credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'] = credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'].astype(int)
+            df_restante = front_restante.copy()
 
             # --- Passo 1: Calcular o "gasto" de cada matrícula com base nos resultados já encontrados ---
             # Usamos o DataFrame completo com os resultados parciais para ter a visão total.
-            gasto_por_matricula = (credbase_com_resultados_parciais
-                                   .dropna(subset=['MATRICULA_ENCONTRADA_1', 'Parcela'])
-                                   .groupby('MATRICULA_ENCONTRADA_1')['Parcela']
+            gasto_por_matricula = (front_com_resultados_parciais
+                                   .dropna(subset=['MATRICULA_ENCONTRADA_1', 'vlPrestacao'])
+                                   .groupby('MATRICULA_ENCONTRADA_1')['vlPrestacao']
                                    .sum())
 
             # print(f'tipo da coluna matrícula {credbase_com_resultados_parciais['MATRICULA_ENCONTRADA_1'].dtype}')
 
-            # print(f'\nGASTO POR MATRICULA: \n{gasto_por_matricula['278846001']}\n')
+            # print(f'\nGASTO POR MATRICULA: \n{gasto_por_matricula['96253']}\n')
 
             # --- Passo 2: Calcular o saldo restante em cada matrícula da averbação ---
             df_averbacao_saldos = averbacao_original.copy()
-            print(f'tipo da coluna matrícula {df_averbacao_saldos['Matrícula'].dtype}')
-            # df_averbacao_saldos['Matrícula'] = df_averbacao_saldos['Matrícula'].astype(int)
+            # print(f'tipo da coluna matrícula {df_averbacao_saldos['Matrícula'].dtype}')
+            df_averbacao_saldos['Matrícula'] = df_averbacao_saldos['Matrícula'].astype(str)
             # Limpa a coluna de valor para garantir que é numérica
             '''df_averbacao_saldos['Valor da reserva'] = (df_averbacao_saldos['Valor da reserva'].astype(str)
                                                        .str.replace(".", "", regex=False)
@@ -202,29 +251,53 @@ class ACHA_MATRICULA_CONSIGFACIL:
             df_averbacao_saldos['saldo_restante'] = df_averbacao_saldos['Valor da reserva'] - df_averbacao_saldos[
                 'gasto_calculado']
 
-            print(f'\nGASTO POR MATRICULA: \n{df_averbacao_saldos.loc[df_averbacao_saldos['Matrícula'] == 278846001]}\n')
+            # print(f'\nGASTO POR MATRICULA: \n{df_averbacao_saldos.loc[df_averbacao_saldos['Matrícula'] == '96253']}\n')
 
             # --- Passo 3: Criar um mapa de busca otimizado: CPF -> [(Matrícula, Saldo), ...] ---
+            # ATENÇÃO: Convertemos para lista de listas para que seja mutável (listas são, tuplas não são)
             mapa_saldos_por_cpf = (df_averbacao_saldos
                                    .groupby('CPF')[['Matrícula', 'saldo_restante']]
-                                   .apply(lambda x: list(x.to_records(index=False)))
+                                   .apply(
+                lambda x: [list(item) for item in x.to_records(index=False)])  # Converte para lista de listas
                                    .to_dict())
 
-            # --- Passo 4: Iterar sobre as linhas restantes e encontrar a melhor matrícula ---
-            for index, row in df_restante.iterrows():
-                cpf = str(row['CPF']).strip()
+            # --- Passo 4: Iterar sobre as linhas restantes e encontrar a melhor matrícula (LÓGICA ALTERADA) ---
+            # É importante ordenar por Parcela (da maior para a menor) para alocar as parcelas grandes primeiro
+            # Isso ajuda a otimizar o uso do saldo
+            df_restante_ordenado = df_restante.sort_values(by=['nrCpf', 'vlPrestacao'], ascending=[True, False])
+
+            for index, row in df_restante_ordenado.iterrows():
+                cpf = str(row['nrCpf']).strip()
+                parcela_a_cobrir = row['vlPrestacao']
 
                 # Pega a lista de matrículas e saldos disponíveis para este CPF
                 saldos_disponiveis = mapa_saldos_por_cpf.get(cpf)
 
                 if saldos_disponiveis:
-                    # Encontra a tupla (matrícula, saldo) com o maior saldo
-                    melhor_opcao = max(saldos_disponiveis, key=lambda item: item[1])
+
+                    # 1. Tenta encontrar matrículas que TÊM saldo suficiente
+                    #    item[0] = Matrícula, item[1] = saldo_restante
+                    opcoes_com_saldo = [item for item in saldos_disponiveis if item[1] >= parcela_a_cobrir]
+
+                    if opcoes_com_saldo:
+                        # Se encontrou, pega a que tem o maior saldo *entre elas*
+                        melhor_opcao = max(opcoes_com_saldo, key=lambda item: item[1])
+                    else:
+                        # 2. Fallback: Se NENHUMA tem saldo, pega a que tem o maior saldo (mesmo que estoure)
+                        melhor_opcao = max(saldos_disponiveis, key=lambda item: item[1])
+
                     melhor_matricula = melhor_opcao[0]
+                    saldo_atual_da_matricula = melhor_opcao[1]
 
                     # Atribui a matrícula encontrada e adiciona uma coluna de auditoria
                     df_restante.loc[index, 'MATRICULA_ENCONTRADA_1'] = melhor_matricula
                     df_restante.loc[index, 'Metodo_Encontrado'] = 'SALDO_RESTANTE'
+                    df_restante.loc[index, 'Saldo_da_Matricula_no_Momento'] = saldo_atual_da_matricula
+
+                    # 3. ATUALIZA O SALDO EM MEMÓRIA (Recálculo)
+                    #    Subtrai a parcela do saldo da matrícula escolhida
+                    #    para que a próxima iteração deste CPF veja o valor atualizado.
+                    melhor_opcao[1] -= parcela_a_cobrir  # Modifica o saldo na lista
 
             print("--- Método 4 concluído! ---")
             return df_restante
@@ -235,7 +308,7 @@ class ACHA_MATRICULA_CONSIGFACIL:
 
         # --- PASSO 1: EXECUTAR MÉTODO DE SOMA POR CPF ---
         print("\n--- Iniciando Método 1: Lógica de Soma por CPF ---")
-        df_resultado_passo_1 = soma_por_cpf(crebase_reduzido, averbacao)
+        df_resultado_passo_1 = soma_por_cpf(front, averbacao)
 
         # Identifica os resolvidos pela coluna de auditoria 'Soma_Calculada'
         mask_resolvidos_p1 = df_resultado_passo_1['Soma_Calculada'].notna()
@@ -341,7 +414,7 @@ class ACHA_MATRICULA_CONSIGFACIL:
             print(f"Aviso: Não foi possível processar a coluna de matrícula. Erro: {e}")
 
         print("Processo geral concluído com sucesso!")
-        caminho_arquivo_saida = fr'{self.caminho}\Matriculas_Tratadas_FINAL_NovaOrdem_2.xlsx'
+        caminho_arquivo_saida = fr'{self.caminho}\MATRICULAS TRATADAS DE CONSIGFACIL.xlsx'
         df_final_combinado.to_excel(caminho_arquivo_saida, index=False)
         print(f"Arquivo final salvo em: {caminho_arquivo_saida}")
         # return df_resultado
