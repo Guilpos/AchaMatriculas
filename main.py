@@ -17,6 +17,7 @@ class ACHA_MATRICULA_CONSIGFACIL:
               ' 2 - O arquivo de averbações precisa ter apenas o produto que você sabe que precisa ser lançado!')
         print(' # ------------------------------------------------------------------------------------------------ #\n\n')
 
+
         def selecionar_arquivo(titulo="Selecione um arquivo", multiplos=False):
             root = tk.Tk()
             root.withdraw()
